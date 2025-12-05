@@ -1,9 +1,7 @@
-import re
 import time
 import keyboard
 import threading
 from copy import deepcopy
-from random import randint
 from assets import ascii
 from keyboard._keyboard_event import KeyboardEvent
 from pieces import Piece
@@ -18,19 +16,21 @@ class Game:
     def __init__(self) -> None:
         self.board = []
         self.temp_board = []
-        self.lock = threading.Lock()
         self.board_max_y = BOARD_Y_SIZE 
         self.board_max_x = BOARD_X_SIZE 
         self.buffor_y_size = BOARD_BUFFOR_SIZE 
         self.game_speed = SPEED
-        self.gameover = False
         self.active_piece: Piece
 
         self.points = 0
         self.level = 0
         self.points_per_line = 40 
 
-        # creating empty table for game board
+        self.lock = threading.Lock()
+        self.stop_game = threading.Event()
+        self.main_thread = threading.Thread(target=self.main, daemon=True)
+        self.keyboard_hook = None
+
         for _ in range(self.board_max_y):
             row = []
             for _ in range(self.board_max_x):
@@ -40,12 +40,11 @@ class Game:
 
     def main(self) -> None:
         self.spawn_piece()
-        while not self.gameover:
+        while not self.stop_game.is_set():
             while True:
                 self.show_active_piece()
                 self.render_board()
                 time.sleep(self.game_speed)
-
 
                 if self.is_floor_collision() or self.is_block_collision():
                     break
@@ -54,9 +53,15 @@ class Game:
                 self.active_piece.move_down()
 
             self.check_rows()
+
+            if self.is_gameover():
+                self.stop_game.set()
+                self.render_gameover()
+                break
+
             self.spawn_piece()
 
-    def handle_keys(self, e: KeyboardEvent) -> None:
+    def keyboard(self, e: KeyboardEvent) -> None:
         if e.name == "h" or e.name == "left":
             if e.event_type == keyboard.KEY_UP:
                 if self.can_move_left():
@@ -88,12 +93,19 @@ class Game:
             elif e.event_type == keyboard.KEY_UP:
                 self.game_speed = SPEED
 
-    def gameover(self) -> None:
-        pass
+    def render_gameover(self) -> None:
+        keyboard.unhook(self.keyboard_hook)
+        ascii.clear_terminal()
+        print(f'''
+GAMEOVER  
+Your points: {self.points}
+
+press 'q' to quit program...
+              ''')
 
     def run(self) -> None:
-        keyboard.hook(self.handle_keys) # .hook for all, press and release but have to think about it
-        threading.Thread(target=self.main, daemon=True).start()
+        self.keyboard_hook = keyboard.hook(self.keyboard)
+        self.main_thread.start()
         keyboard.wait('q')
 
     def render_board(self) -> None:
@@ -117,7 +129,7 @@ class Game:
     def spawn_piece(self) -> None:
         self.active_piece = Piece() 
         self.temp_board = deepcopy(self.board)
-        self.active_piece.x = randint(0, self.board_max_x - len(self.active_piece.layout[0])) 
+        self.active_piece.x = BOARD_X_SIZE // 2 - len(self.active_piece.layout[0]) // 2
 
     def hide_active_piece(self) -> None:
         with self.lock: # prevent exec from keyboard and gameloop at the same time
